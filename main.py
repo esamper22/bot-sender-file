@@ -1,126 +1,109 @@
 import asyncio
 import re
 from telethon import TelegramClient, events
-from telethon.errors import ChatWriteForbiddenError
+# Removed unused import
 from config.config import API_ID, API_HASH, PHONE, TELEGRAM_SESSION, ALLOWED_CHAT
 from handlers.file_handler import process_file_request
 
 client = TelegramClient(TELEGRAM_SESSION, API_ID, API_HASH)
 ALLOWED_CHAT_ID = int(ALLOWED_CHAT)
 
-# Diccionarios para gestionar solicitudes
-pending_requests = {}  # chat_id -> URL pendiente
-active_requests = {}   # chat_id -> bool (solicitud en proceso)
+request_queue = {}  # chat_id: {'url': str, 'active': bool}
 
 @client.on(events.NewMessage(pattern='/start'))
-async def start_command(event):
+async def start_handler(event):
     if event.chat_id != ALLOWED_CHAT_ID:
         return
-    try:
-        welcome_text = (
-            "👋 ¡Hola! Bienvenido al bot de envío de archivos.\n\n"
-            "📋 Comandos disponibles:\n"
-            "➡️ /sendfile - Inicia el proceso para enviar un archivo desde una URL.\n"
-            "➡️ /help - Muestra este menú de ayuda.\n"
-        )
-        await event.reply(welcome_text)
-    except ChatWriteForbiddenError:
-        print(f"No se puede escribir en el chat {event.chat_id}.")
-    except Exception as e:
-        print("Error en start_command:", e)
-
-@client.on(events.NewMessage(pattern='/help'))
-async def help_command(event):
-    if event.chat_id != ALLOWED_CHAT_ID:
-        return
-    try:
-        help_text = (
-            "ℹ️ *Ayuda del Bot*\n\n"
-            "Comandos disponibles:\n"
-            "➡️ /sendfile - Inicia el proceso para enviar un archivo desde una URL.\n"
-            "➡️ /help - Muestra este menú de ayuda.\n\n"
-            "Para enviar un archivo, usa /sendfile y luego envía la URL.\n"
-            "Responde con **descargar** para iniciar o **cancelar** para abortar."
-        )
-        await event.reply(help_text, parse_mode='markdown')
-    except ChatWriteForbiddenError:
-        print(f"No se puede escribir en el chat {event.chat_id}.")
-    except Exception as e:
-        print("Error en help_command:", e)
+    await event.reply(
+        "🤖 **Bot de Descargas**\n\n"
+        "Envía /sendfile seguido de una URL para comenzar\n"
+        "Usa /help para ver todos los comandos",
+        parse_mode='md'
+    )
 
 @client.on(events.NewMessage(pattern='/sendfile'))
-async def sendfile_command_handler(event):
+async def sendfile_handler(event):
     if event.chat_id != ALLOWED_CHAT_ID:
         return
-    try:
-        if active_requests.get(event.chat_id, False):
-            await event.reply("⚠️ Ya tienes una solicitud activa. Espera a que termine.")
-            return
-        pending_requests.pop(event.chat_id, None)
-        await event.reply("📥 Por favor, envía la URL del archivo que deseas descargar y enviar.")
-    except ChatWriteForbiddenError:
-        print(f"No se puede escribir en el chat {event.chat_id}.")
-    except Exception as e:
-        print("Error en sendfile_command_handler:", e)
+    
+    current = request_queue.get(event.chat_id)
+    if current and current['active']:
+        await event.reply("⏳ Ya tienes una descarga en progreso")
+        return
+    
+    request_queue[event.chat_id] = {'url': None, 'active': False}
+    await event.reply("📥 Por favor envía la URL del archivo")
 
 @client.on(events.NewMessage)
-async def url_message_handler(event):
+async def message_handler(event):
     if event.chat_id != ALLOWED_CHAT_ID:
         return
-    try:
-        # Evitamos procesar comandos o respuestas predeterminadas
-        if event.raw_text.startswith('/') or event.raw_text.lower() in ("descargar", "cancelar"):
-            return
-
-        # Buscar URL en el mensaje
-        url_pattern = r'(https?://\S+)'
-        match = re.search(url_pattern, event.raw_text)
-        if match:
-            url = match.group(1)
-            if event.chat_id in pending_requests:
-                await event.reply("⚠️ Ya tienes una solicitud pendiente. Responde **descargar** o **cancelar**.")
-                return
-            pending_requests[event.chat_id] = url
+    
+    # Detectar URLs
+    url_match = re.search(r'https?://\S+', event.raw_text)
+    if url_match and not event.raw_text.startswith('/') and not event.raw_text.lower() in ['descargar', 'cancelar']:
+        if event.chat_id not in request_queue:
+            request_queue[event.chat_id] = {
+                'url': url_match.group(),
+                'active': False
+            }
             await event.reply(
-                f"🔗 *URL detectada:*\n{url}\n\nResponde **descargar** para iniciar o **cancelar** para abortar.",
-                parse_mode='markdown'
+                f"🔗 URL detectada:\n{url_match.group()}\n\n"
+                "Responde 'descargar' para continuar o 'cancelar' para abortar"
             )
         else:
-            await event.reply("⚠️ No se detectó ninguna URL. Envía una URL válida.")
-    except ChatWriteForbiddenError:
-        print(f"No se puede escribir en el chat {event.chat_id}.")
-    except Exception as e:
-        print("Error en url_message_handler:", e)
-
-@client.on(events.NewMessage(chats=ALLOWED_CHAT_ID))
-async def user_response_handler(event):
-    if event.chat_id not in pending_requests:
-        return
-    try:
-        response = event.raw_text.strip().lower()
-        if response == "descargar":
-            if active_requests.get(event.chat_id, False):
-                await event.reply("⚠️ Ya hay una solicitud activa. Espera a que termine.")
+            await event.reply(
+               "Url ya está en cola, responde 'cancelar' para abortar"
+            )
+    
+    # Manejar respuestas
+    elif event.raw_text.lower() in ['descargar', 'cancelar']:
+        current = request_queue.get(event.chat_id)
+        if not current:
+            return
+            
+        if event.raw_text.lower() == 'descargar':
+            if current['active']:
+                await event.reply("🔄 Ya se está procesando esta solicitud")
                 return
-            active_requests[event.chat_id] = True
-            await event.reply("⏳ Procesando tu solicitud. Por favor, espera...")
-            await process_file_request(pending_requests[event.chat_id], client, event.chat_id)
-            await event.reply("✅ Archivo(s) enviado(s) correctamente.")
-            pending_requests.pop(event.chat_id, None)
-            active_requests.pop(event.chat_id, None)
-        elif response == "cancelar":
-            await event.reply("❌ Operación cancelada.")
-            pending_requests.pop(event.chat_id, None)
-    except Exception as e:
-        print("Error en user_response_handler:", e)
+                
+            request_queue[event.chat_id]['active'] = True
+            await event.reply("🚀 Iniciando descarga...")
+            
+            try:
+                # Check if the request was canceled before starting the download
+                if event.chat_id not in request_queue or not request_queue[event.chat_id]['active']:
+                    await event.reply("❌ Operación cancelada antes de iniciar la descarga")
+                    return
+                
+                success = await process_file_request(
+                    current['url'],
+                    client,
+                    event.chat_id
+                )
+                
+                if success:
+                    await event.reply("🎉 Proceso completado exitosamente")
+                else:
+                    await event.reply("⚠️ Finalizado con errores")
+                    
+            except Exception as e:
+                await event.reply(f"❌ Error fatal: {str(e)[:150]}")
+                
+            finally:
+                del request_queue[event.chat_id]
+                
+        elif event.raw_text.lower() == 'cancelar':
+            try:
+                del request_queue[event.chat_id]
+                await event.reply("❌ Operación cancelada")
+            except:
+                await event.reply("❌ No hay operaciones para cancelar")
 
 async def main():
-    try:
-        await client.start(phone=PHONE)
-        print("✅ Cliente iniciado como usuario. Esperando comandos...")
-        await client.run_until_disconnected()
-    except Exception as e:
-        print("Error en main:", e)
+    await client.start(phone=PHONE)
+    print("✅ Bot iniciado")
+    await client.run_until_disconnected()
 
 if __name__ == '__main__':
     asyncio.run(main())
