@@ -1,9 +1,12 @@
 import asyncio
+import os
 import re
+import sys
 from telethon import TelegramClient, events
 # Removed unused import
 from config.config import API_ID, API_HASH, PHONE, TELEGRAM_SESSION, ALLOWED_CHAT
 from handlers.file_handler import process_file_request
+from aiohttp import web
 
 client = TelegramClient(TELEGRAM_SESSION, API_ID, API_HASH)
 ALLOWED_CHAT_ID = int(ALLOWED_CHAT)
@@ -100,10 +103,41 @@ async def message_handler(event):
             except:
                 await event.reply("❌ No hay operaciones para cancelar")
 
-async def main():
+async def handle(request):
+    return web.Response(text="Bot is running")
+
+async def run_bot():
     await client.start(phone=PHONE)
     print("✅ Bot iniciado")
     await client.run_until_disconnected()
 
+async def run_server():
+    app = web.Application()
+    app.router.add_get("/", handle)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.environ.get("PORT", 10000))
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    print(f"Servidor web iniciado en el puerto {port}")
+
+async def main():
+    try:
+        await asyncio.gather(run_bot(), run_server())
+    except Exception as e:
+        print(f"❌ Error detectado: {e}")
+        print("♻️ Reiniciando el bot...")
+        restart_bot()
+
+def restart_bot():
+    python = sys.executable
+    os.execv(python, [python] + sys.argv)
+
 if __name__ == '__main__':
-    asyncio.run(main())
+    while True:
+        try:
+            asyncio.run(main())
+        except Exception as e:
+            print(f"❌ Error crítico: {e}")
+            print("♻️ Reiniciando el bot...")
+            restart_bot()
