@@ -18,5 +18,8 @@ ALLOWED_CHAT = os.getenv("ALLOWED_CHAT")  # Carga el ID del chat permitido desde
  # Reconstruir la sesión (para verificar)
 reconstructed_data = reconstruct_session_from_env()
 if reconstructed_data:
-    with open(TELEGRAM_SESSION + '.session', 'wb') as file:
-        file.write(reconstructed_data)
+    try:
+        with open(TELEGRAM_SESSION + '.session', 'wb') as file:
+            file.write(reconstructed_data)
+    except FileNotFoundError:
+        print(f"❌ No se pudo guardar la sesión en {TELEGRAM_SESSION}.session")
