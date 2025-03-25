@@ -90,7 +90,7 @@ async def process_file_request(url, client, chat_id):
             else:
                 # Lógica para archivos grandes
                 await client.send_message(chat_id, "🔀 Procesando archivo grande en partes...")
-                chunk_paths = download_file_in_chunks(url, temp_dir)
+                chunk_paths = download_file_in_chunks(url)
                 for chunk in chunk_paths:
                     await client.send_file(chat_id, chunk, caption="📦 Parte de archivo")
                 return True
