@@ -1,0 +1,5 @@
+# Dependencias (telethon, requests)
+telethon
+requests
+aiohttp
+
